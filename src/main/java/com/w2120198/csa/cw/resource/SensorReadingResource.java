@@ -7,6 +7,7 @@ import com.w2120198.csa.cw.model.Sensor;
 import com.w2120198.csa.cw.model.SensorReading;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import javax.ws.rs.Consumes;
@@ -38,7 +39,14 @@ public class SensorReadingResource {
     @Produces(MediaType.APPLICATION_JSON)
     public List<SensorReading> getReadings() {
         List<SensorReading> history = MockDatabase.READINGS_BY_SENSOR.get(parent.getId());
-        return (history != null) ? new ArrayList<>(history) : new ArrayList<>();
+        if (history == null) {
+            return new ArrayList<>();
+        }
+        // A synchronized-list wrapper is thread-safe for single ops
+        // but iteration still requires an external lock on the wrapper.
+        synchronized (history) {
+            return new ArrayList<>(history);
+        }
     }
 
     @POST
@@ -61,10 +69,8 @@ public class SensorReadingResource {
         }
 
         List<SensorReading> history = MockDatabase.READINGS_BY_SENSOR
-                .computeIfAbsent(parent.getId(), k -> new ArrayList<>());
-        synchronized (history) {
-            history.add(reading);
-        }
+                .computeIfAbsent(parent.getId(), k -> Collections.synchronizedList(new ArrayList<>()));
+        history.add(reading);
 
         // Side effect mandated by spec Part 4.2: the parent sensor's
         // currentValue must reflect the most recent reading immediately.
