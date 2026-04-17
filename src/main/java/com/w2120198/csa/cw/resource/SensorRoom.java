@@ -58,7 +58,14 @@ public class SensorRoom {
                     .build();
         }
         if (roomDAO.getById(room.getId()) != null) {
-            throw new RoomNotEmptyException("Room with id '" + room.getId() + "' already exists.");
+            // RoomNotEmptyException is reserved for the "still has sensors"
+            // case (Part 5.1). A duplicate id is a different 409 scenario,
+            // handled inline to keep the exception hierarchy unambiguous.
+            return Response.status(Response.Status.CONFLICT)
+                    .entity("{\"errorMessage\":\"Room id '" + room.getId()
+                            + "' is already registered.\",\"errorCode\":409}")
+                    .type(MediaType.APPLICATION_JSON)
+                    .build();
         }
         // sensorIds are maintained server-side as sensors are registered.
         room.setSensorIds(new ArrayList<>());
