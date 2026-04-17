@@ -3,6 +3,7 @@ package com.w2120198.csa.cw.exception;
 import com.w2120198.csa.cw.model.ErrorMessage;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.Response.Status;
 import javax.ws.rs.ext.ExceptionMapper;
@@ -27,6 +28,9 @@ public class GenericExceptionMapper implements ExceptionMapper<Throwable> {
                 "The server encountered an unexpected error. Please retry or contact support.",
                 Status.INTERNAL_SERVER_ERROR.getStatusCode(),
                 DOCS);
-        return Response.status(Status.INTERNAL_SERVER_ERROR).entity(body).build();
+        return Response.status(Status.INTERNAL_SERVER_ERROR)
+                .type(MediaType.APPLICATION_JSON)
+                .entity(body)
+                .build();
     }
 }
