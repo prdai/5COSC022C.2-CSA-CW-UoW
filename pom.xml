@@ -25,6 +25,13 @@
             <version>2.32</version>
         </dependency>
 
+        <!-- JSON provider (Week 07 lecture, §16.1) -->
+        <dependency>
+            <groupId>org.glassfish.jersey.media</groupId>
+            <artifactId>jersey-media-json-jackson</artifactId>
+            <version>2.32</version>
+        </dependency>
+
     </dependencies>
 
     <build>
