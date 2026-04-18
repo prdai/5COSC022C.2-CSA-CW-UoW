@@ -1,12 +1,6 @@
 package com.w2120198.csa.cw.model;
 
-/**
- * A single measurement recorded by a sensor. Readings are addressed
- * via the sub-resource path {@code /sensors/{sensorId}/readings}; the
- * parent sensor context is therefore implicit and no {@code sensorId}
- * field is kept on the reading itself.
- */
-public class SensorReading implements BaseModel {
+public class SensorReading {
 
     private String id;
     private long timestamp;
@@ -21,12 +15,10 @@ public class SensorReading implements BaseModel {
         this.value = value;
     }
 
-    @Override
     public String getId() {
         return id;
     }
 
-    @Override
     public void setId(String id) {
         this.id = id;
     }

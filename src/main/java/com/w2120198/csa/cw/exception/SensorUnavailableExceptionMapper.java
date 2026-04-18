@@ -10,11 +10,9 @@ import javax.ws.rs.ext.Provider;
 @Provider
 public class SensorUnavailableExceptionMapper implements ExceptionMapper<SensorUnavailableException> {
 
-    private static final String DOCS = "https://smartcampus.westminster.ac.uk/api/docs/errors#403";
-
     @Override
     public Response toResponse(SensorUnavailableException exception) {
-        ErrorMessage body = new ErrorMessage(exception.getMessage(), Status.FORBIDDEN.getStatusCode(), DOCS);
+        ErrorMessage body = new ErrorMessage(exception.getMessage(), Status.FORBIDDEN.getStatusCode());
         return Response.status(Status.FORBIDDEN)
                 .type(MediaType.APPLICATION_JSON)
                 .entity(body)

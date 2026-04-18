@@ -10,11 +10,10 @@ import javax.ws.rs.ext.Provider;
 public class LinkedResourceNotFoundExceptionMapper implements ExceptionMapper<LinkedResourceNotFoundException> {
 
     private static final int UNPROCESSABLE_ENTITY = 422;
-    private static final String DOCS = "https://smartcampus.westminster.ac.uk/api/docs/errors#422";
 
     @Override
     public Response toResponse(LinkedResourceNotFoundException exception) {
-        ErrorMessage body = new ErrorMessage(exception.getMessage(), UNPROCESSABLE_ENTITY, DOCS);
+        ErrorMessage body = new ErrorMessage(exception.getMessage(), UNPROCESSABLE_ENTITY);
         return Response.status(UNPROCESSABLE_ENTITY)
                 .type(MediaType.APPLICATION_JSON)
                 .entity(body)

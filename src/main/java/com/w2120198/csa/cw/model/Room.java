@@ -3,13 +3,7 @@ package com.w2120198.csa.cw.model;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Physical space on campus. The embedded {@code sensorIds} collection
- * mirrors the one-to-many link to {@link Sensor}; it is maintained by
- * the service as sensors are registered and deleted, not populated
- * from client payloads.
- */
-public class Room implements BaseModel {
+public class Room {
 
     private String id;
     private String name;
@@ -25,12 +19,10 @@ public class Room implements BaseModel {
         this.capacity = capacity;
     }
 
-    @Override
     public String getId() {
         return id;
     }
 
-    @Override
     public void setId(String id) {
         this.id = id;
     }

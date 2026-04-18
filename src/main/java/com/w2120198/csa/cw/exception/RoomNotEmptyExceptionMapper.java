@@ -10,11 +10,9 @@ import javax.ws.rs.ext.Provider;
 @Provider
 public class RoomNotEmptyExceptionMapper implements ExceptionMapper<RoomNotEmptyException> {
 
-    private static final String DOCS = "https://smartcampus.westminster.ac.uk/api/docs/errors#409";
-
     @Override
     public Response toResponse(RoomNotEmptyException exception) {
-        ErrorMessage body = new ErrorMessage(exception.getMessage(), Status.CONFLICT.getStatusCode(), DOCS);
+        ErrorMessage body = new ErrorMessage(exception.getMessage(), Status.CONFLICT.getStatusCode());
         return Response.status(Status.CONFLICT)
                 .type(MediaType.APPLICATION_JSON)
                 .entity(body)

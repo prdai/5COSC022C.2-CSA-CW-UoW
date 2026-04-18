@@ -9,11 +9,6 @@ import javax.ws.rs.core.Context;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.UriInfo;
 
-/**
- * Root discovery endpoint. Returns metadata about the API and a map
- * of primary resource collection URIs so clients can traverse the API
- * from a single well-known entry point (HATEOAS-style).
- */
 @Path("/")
 public class DiscoveryResource {
 
@@ -36,7 +31,6 @@ public class DiscoveryResource {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("apiName", "Smart Campus Sensor & Room Management API");
         body.put("version", "1.0.0");
-        body.put("module", "5COSC022W — Client-Server Architectures");
         body.put("administrator", administrator);
         body.put("resources", resources);
         return body;
