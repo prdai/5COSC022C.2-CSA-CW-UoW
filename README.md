@@ -27,9 +27,9 @@ The service exposes four resource groups under the versioned base path `/api/v1`
 
 Design choices worth flagging up front:
 
-- **In-memory storage only.** The specification forbids a database. `dao/MockDatabase.java` holds three in-process collections (two `ArrayList`s and one `ConcurrentHashMap`) and `dao/GenericDAO.java` mediates access with synchronised blocks.
-- **JSON everywhere.** Every resource method either produces or consumes `application/json`; every error path is intercepted by a dedicated `ExceptionMapper` that returns a structured JSON body rather than the servlet container's default error page.
-- **Referential integrity is enforced at the service layer.** A sensor cannot be registered for a non-existent room, a room cannot be deleted while any sensor still references it, and a sensor under maintenance refuses new readings. Each of those violations maps to a distinct HTTP status code (422, 409, 403).
+- **In-memory storage only.** The specification forbids a database. Each DAO (`dao/RoomDAO.java`, `dao/SensorDAO.java`) holds a `static final List<T>` wrapped in `Collections.synchronizedList`, guarded by `synchronized` blocks on every read and write. `dao/SensorReadingDAO.java` keys a `ConcurrentHashMap` by `sensorId`, with the inner history list again synchronised for iteration.
+- **Three-tier separation.** Resources (`resource/*.java`) do nothing but JAX-RS mapping and `Response` construction. Business rules and multi-DAO orchestration live in the service layer (`service/RoomService.java`, `service/SensorService.java`, `service/SensorReadingService.java`). The service layer is where the three domain rules the specification lists are enforced: a sensor cannot be registered for a non-existent room, a room cannot be deleted while any sensor still references it, and a sensor under maintenance refuses new readings. Each violation maps to a distinct HTTP status code — 422, 409, 403 respectively.
+- **JSON everywhere.** Every resource method either produces or consumes `application/json`; each of the three domain exception mappers returns a structured `ErrorMessage` body (`errorMessage` + `errorCode`) rather than the servlet container's default error page.
 - **Stack traces never leave the process.** `GenericExceptionMapper` catches `Throwable`, logs the failure server-side through `java.util.logging`, and returns a generic 500 body.
 
 ## Build and run
@@ -64,21 +64,13 @@ curl -s http://localhost:8080/smart-campus-sensor-and-room-management-api/api/v1
 
 A 200 response containing the `resources` map confirms that the JAX-RS application has bootstrapped and classpath scanning has picked up the resource classes.
 
-**Seed data**
+**Fresh-start behaviour**
 
-`dao/MockDatabase.java` populates the store on first access with two rooms and three sensors, so the endpoints return non-empty responses immediately:
-
-| Rooms | Sensors |
-|---|---|
-| `LIB-301` Library Quiet Study (capacity 40) | `TEMP-001` Temperature, ACTIVE, in `LIB-301` |
-| `LEC-101` Lecture Hall A (capacity 120) | `CO2-001` CO2, ACTIVE, in `LIB-301` |
-| | `OCC-001` Occupancy, **MAINTENANCE**, in `LEC-101` |
-
-The sensor `OCC-001` is deliberately left in `MAINTENANCE` so the 403 path is easy to exercise during demonstration.
+The three in-memory stores begin empty on every deployment. The curl sequence below is ordered as a self-contained demonstration: steps 2–5 create the rooms and sensors that the later steps read, filter, and operate on.
 
 ## Sample curl commands
 
-The specification requires at least five. The examples below cover discovery, happy-path CRUD, filtering, and each of the three domain-specific error paths.
+The specification requires at least five. The twelve calls below cover discovery, happy-path CRUD, filtering, the sub-resource locator, and each of the three domain-specific error paths. They are designed to run end-to-end on a freshly-deployed WAR.
 
 ```bash
 BASE="http://localhost:8080/smart-campus-sensor-and-room-management-api/api/v1"
@@ -90,58 +82,74 @@ BASE="http://localhost:8080/smart-campus-sensor-and-room-management-api/api/v1"
 curl -s "$BASE"
 ```
 
-**2. List all rooms**
+**2. Create a room (expect 201 Created + `Location` header)**
+
+```bash
+curl -s -i -X POST "$BASE/rooms" \
+     -H "Content-Type: application/json" \
+     -d '{"id":"LIB-301","name":"Library Quiet Study","capacity":40}'
+```
+
+**3. Create a second room**
+
+```bash
+curl -s -i -X POST "$BASE/rooms" \
+     -H "Content-Type: application/json" \
+     -d '{"id":"LEC-101","name":"Lecture Hall A","capacity":120}'
+```
+
+**4. Register a sensor inside the first room**
+
+```bash
+curl -s -i -X POST "$BASE/sensors" \
+     -H "Content-Type: application/json" \
+     -d '{"id":"TEMP-001","type":"Temperature","status":"ACTIVE","currentValue":21.3,"roomId":"LIB-301"}'
+```
+
+**5. Register a sensor that is already under `MAINTENANCE` (for the 403 path below)**
+
+```bash
+curl -s -i -X POST "$BASE/sensors" \
+     -H "Content-Type: application/json" \
+     -d '{"id":"OCC-001","type":"Occupancy","status":"MAINTENANCE","currentValue":0.0,"roomId":"LEC-101"}'
+```
+
+**6. List all rooms**
 
 ```bash
 curl -s "$BASE/rooms"
 ```
 
-**3. Fetch a single room by id**
+**7. Fetch a single room by id**
 
 ```bash
 curl -s "$BASE/rooms/LIB-301"
 ```
 
-**4. Create a new room (expect 201 Created + `Location` header)**
-
-```bash
-curl -s -i -X POST "$BASE/rooms" \
-     -H "Content-Type: application/json" \
-     -d '{"id":"LAB-220","name":"Physics Lab 2","capacity":30}'
-```
-
-**5. Register a sensor inside that new room**
-
-```bash
-curl -s -i -X POST "$BASE/sensors" \
-     -H "Content-Type: application/json" \
-     -d '{"id":"LIGHT-220","type":"Lighting","status":"ACTIVE","currentValue":450.0,"roomId":"LAB-220"}'
-```
-
-**6. Filter sensors by type with a query parameter**
+**8. Filter sensors by type with a query parameter**
 
 ```bash
 curl -s "$BASE/sensors?type=Temperature"
 ```
 
-**7. Append a reading to a sensor (side effect: parent `currentValue` updates)**
+**9. Append a reading to a sensor (side effect: parent `currentValue` updates)**
 
 ```bash
 curl -s -i -X POST "$BASE/sensors/TEMP-001/readings" \
      -H "Content-Type: application/json" \
-     -d '{"value":22.8}'
+     -d '{"value":22.8,"timestamp":1713352800000}'
 
-# Re-fetch TEMP-001 to confirm currentValue was refreshed to 22.8
-curl -s "$BASE/sensors/TEMP-001"
+# Re-read the readings history to confirm the reading was recorded
+curl -s "$BASE/sensors/TEMP-001/readings"
 ```
 
-**8. Error path — delete a room that still has sensors (expect 409 Conflict)**
+**10. Error path — delete a room that still has sensors (expect 409 Conflict)**
 
 ```bash
 curl -s -i -X DELETE "$BASE/rooms/LIB-301"
 ```
 
-**9. Error path — register a sensor for a non-existent room (expect 422 Unprocessable Entity)**
+**11. Error path — register a sensor for a non-existent room (expect 422 Unprocessable Entity)**
 
 ```bash
 curl -s -i -X POST "$BASE/sensors" \
@@ -149,7 +157,7 @@ curl -s -i -X POST "$BASE/sensors" \
      -d '{"id":"HEAT-999","type":"Temperature","status":"ACTIVE","currentValue":19.0,"roomId":"NOT-A-ROOM"}'
 ```
 
-**10. Error path — post a reading to a sensor in MAINTENANCE (expect 403 Forbidden)**
+**12. Error path — post a reading to a sensor in MAINTENANCE (expect 403 Forbidden)**
 
 ```bash
 curl -s -i -X POST "$BASE/sensors/OCC-001/readings" \
@@ -161,32 +169,37 @@ curl -s -i -X POST "$BASE/sensors/OCC-001/readings" \
 
 ```
 smart-campus-sensor-and-room-management-api/
-├── pom.xml                              Maven build, packaging = war
+├── pom.xml                                 Maven build, packaging = war
 └── src/main/
     ├── java/com/w2120198/csa/cw/
-    │   ├── SmartCampusApplication.java   @ApplicationPath("/api/v1")
-    │   ├── dao/
-    │   │   ├── GenericDAO.java           Synchronised list-backed store
-    │   │   └── MockDatabase.java         Static seed data + readings map
-    │   ├── model/
-    │   │   ├── BaseModel.java            Shared id contract
-    │   │   ├── ErrorMessage.java         JSON error envelope
-    │   │   ├── Room.java
-    │   │   ├── Sensor.java               STATUS_ACTIVE/MAINTENANCE/OFFLINE
-    │   │   └── SensorReading.java
+    │   ├── SmartCampusApplication.java     @ApplicationPath("/api/v1")
     │   ├── resource/
-    │   │   ├── DiscoveryResource.java    GET /api/v1
-    │   │   ├── SensorRoom.java           /api/v1/rooms
-    │   │   ├── SensorResource.java       /api/v1/sensors
+    │   │   ├── DiscoveryResource.java      GET /api/v1
+    │   │   ├── SensorRoom.java             /api/v1/rooms
+    │   │   ├── SensorResource.java         /api/v1/sensors
     │   │   └── SensorReadingResource.java  sub-resource, constructed by locator
+    │   ├── service/
+    │   │   ├── RoomService.java            orphan-room check (409)
+    │   │   ├── SensorService.java          roomId referential integrity (422)
+    │   │   └── SensorReadingService.java   MAINTENANCE guard (403) + currentValue side-effect
+    │   ├── dao/
+    │   │   ├── RoomDAO.java                static synchronized list
+    │   │   ├── SensorDAO.java              static synchronized list
+    │   │   └── SensorReadingDAO.java       ConcurrentHashMap<sensorId, synchronizedList>
+    │   ├── model/
+    │   │   ├── ErrorMessage.java           JSON error envelope (errorMessage + errorCode)
+    │   │   ├── Room.java
+    │   │   ├── Sensor.java                 STATUS_MAINTENANCE constant
+    │   │   └── SensorReading.java
     │   └── exception/
-    │       ├── DataNotFoundException.java + Mapper       404
     │       ├── RoomNotEmptyException.java + Mapper       409
     │       ├── LinkedResourceNotFoundException + Mapper  422
     │       ├── SensorUnavailableException.java + Mapper  403
     │       └── GenericExceptionMapper.java               500 catch-all
-    └── webapp/WEB-INF/                   servlet descriptor (empty — Jersey scans)
+    └── webapp/WEB-INF/                     servlet descriptor (empty — Jersey scans)
 ```
+
+404 responses for missing rooms or sensors are returned inline from the resource methods rather than through a dedicated exception mapper. The four mapper-backed codes (409, 422, 403, 500) are the exact set the specification Part 5 enumerates.
 
 ---
 
@@ -198,11 +211,11 @@ The questions below are transcribed verbatim from the coursework specification. 
 
 **Question.** Explain the default lifecycle of a JAX-RS Resource class. Is a new instance instantiated for every incoming request, or does the runtime treat it as a singleton? Elaborate on how this architectural decision impacts the way you manage and synchronize your in-memory data structures (maps/lists) to prevent data loss or race conditions.
 
-By default, Jersey creates a fresh instance of each resource class for every incoming request. The JAX-RS specification calls this the "per-request" lifecycle, and it is the behaviour used throughout this project because no class is annotated with `@Singleton` and no explicit binding is registered in `SmartCampusApplication.java`. The practical consequence is that instance fields on a resource class are inherently thread-confined: `SensorRoom`, `SensorResource`, and `SensorReadingResource` all hold their collaborators (the `GenericDAO` handles and, in the reading resource, the parent `Sensor`) as instance fields, and those fields are seen only by the thread servicing the request that triggered their construction.
+By default, Jersey creates a fresh instance of each resource class for every incoming request. The JAX-RS specification calls this the "per-request" lifecycle, and it is the behaviour used throughout this project because no resource class is annotated with `@Singleton` and no explicit binding is registered in `SmartCampusApplication.java`. The practical consequence is that instance fields on a resource class are thread-confined: `SensorRoom`, `SensorResource`, and `SensorReadingResource` each hold a service-layer collaborator as an instance field, and those fields are only visible to the thread handling the request that triggered the resource's construction.
 
-The data that genuinely crosses request boundaries lives in `dao/MockDatabase.java`, whose three static collections are shared by every request thread. Two of them (`ROOMS` and `SENSORS`) are plain `ArrayList`s; iteration and mutation must therefore be coordinated. `dao/GenericDAO.java` takes that responsibility on behalf of the resource classes: every read and write method acquires a monitor on the backing list through `synchronized (items) { ... }`. This prevents the two common failure modes that would otherwise appear — `ConcurrentModificationException` from a reader traversing the list while a writer removes an element, and lost updates from two writers racing on `List.set`. The readings map, `READINGS_BY_SENSOR`, is instead declared as a `ConcurrentHashMap`, which gives `computeIfAbsent` the atomic "fetch-or-create" guarantee needed to register the first reading for a sensor without a torn update. The inner list it stores is then protected with a narrower synchronised block inside `SensorReadingResource.addReading` (`synchronized (history) { history.add(reading); }`).
+The data that genuinely crosses request boundaries lives in the DAO classes. `dao/RoomDAO.java` and `dao/SensorDAO.java` each declare a `private static final List<T>` initialised through `Collections.synchronizedList(new ArrayList<>())`. Every read and write method on these DAOs acquires a monitor on the backing list via `synchronized (ROOMS) { ... }` or `synchronized (SENSORS) { ... }`. Two common failure modes are ruled out by that pattern: `ConcurrentModificationException` from a reader traversing the list while a writer removes an element, and lost updates from two writers racing on `List.set`. The readings store is a different shape: `dao/SensorReadingDAO.java` holds a `static final Map<String, List<SensorReading>>` declared as a `ConcurrentHashMap`, keyed by `sensorId`. `computeIfAbsent` gives the atomic fetch-or-create guarantee needed to register the first reading for a new sensor without a torn update, and the inner list is again a `synchronizedList` so iteration over a sensor's history is safe even while other threads are appending to it.
 
-The spec's compound rule "delete a room only if it has no sensors" cannot be expressed by concurrent collections alone because it is a check-then-act sequence. The lock held by `GenericDAO.delete` covers only the removal; the precondition is checked in the resource, so in a truly contended system a narrower invariant would be required. For the traffic profile this assessment targets, the per-method synchronisation in `GenericDAO` is sufficient and the trade-off is documented here rather than masked.
+The specification's compound rule "delete a room only if it has no sensors" cannot be expressed by concurrent collections alone because it is a check-then-act sequence. `service/RoomService.delete` first calls `roomDAO.getById(id)` (which takes and releases the monitor once) and then, if the room exists and is empty, calls `roomDAO.delete(id)` (which takes and releases the monitor a second time). The two steps are not held under a single lock, so in a heavily contended system a stronger invariant would be required — for example, lifting the whole check-then-act into a single synchronised block on `ROOMS`, or moving the compound operation into a DAO method dedicated to it. For the traffic profile this assessment targets, the per-method synchronisation is sufficient and the trade-off is documented here rather than hidden.
 
 ### 7.2 Part 1.2 — Hypermedia and HATEOAS
 
@@ -232,10 +245,10 @@ Production APIs that need both shapes typically expose one of three compromises:
 
 Yes — and the crucial distinction is that idempotency is defined on the **server state** that results from the request, not on the response the client observes. RFC 7231 §4.2.2 puts it precisely: a method is idempotent if the intended effect of N identical requests (for N ≥ 1) is the same as the effect of a single request.
 
-Tracing the three cases against `SensorRoom.deleteRoom` in `resource/SensorRoom.java`:
+Tracing the three cases against `SensorRoom.deleteRoom` in `resource/SensorRoom.java`, which delegates to `service/RoomService.java`:
 
-1. **First call on a room with no sensors.** `roomDAO.getById(roomId)` returns the entity, the `sensorIds` guard passes because the collection is empty, `roomDAO.delete(roomId)` removes it, and the method returns `204 No Content`. The server state after this call contains no such room.
-2. **Second identical call.** `roomDAO.getById(roomId)` now returns `null`; the method throws `DataNotFoundException`, which `DataNotFoundExceptionMapper` renders as `404 Not Found`. The server state does not change: the room is still absent.
+1. **First call on a room with no sensors.** `roomService.delete(roomId)` looks up the entity, finds the `sensorIds` collection empty, removes the room from the in-memory list, and returns `true`. The resource converts that into `204 No Content`. The server state after this call contains no such room.
+2. **Second identical call.** `roomService.delete(roomId)` fails its lookup — `roomDAO.getById(roomId)` now returns `null` — and the service returns `false`. The resource maps the `false` return value to an inline `404 Not Found` response with an `ErrorMessage` body. The server state does not change: the room is still absent.
 3. **Third, fourth, ... call.** Exactly the same as call 2. The 404 body is deterministic and the store is untouched.
 
 The status codes differ between call 1 and calls 2+, but the property required by idempotency is satisfied: after any non-zero number of identical `DELETE /rooms/{id}` requests, the room is absent. A client that retries a lost acknowledgement therefore converges on the same outcome as one that succeeded on the first attempt, which is exactly the network-resilience property the REST community attributes to idempotent verbs.
@@ -248,7 +261,7 @@ The 409 Conflict case ("room still has sensors") does not threaten this guarante
 
 `@Consumes` is the server half of content negotiation: it advertises the media types the resource method is prepared to deserialise. When a request arrives, Jersey's runtime inspects the `Content-Type` header before it selects a method to invoke. If no resource method on the matched path declares a `@Consumes` value compatible with the client's `Content-Type`, Jersey never constructs the resource, never calls the method, and returns **HTTP 415 Unsupported Media Type** with an empty body.
 
-Two consequences follow for the present API. First, validation code written inside `SensorResource.createSensor` — the null checks on `sensor.getId()`, the referential-integrity lookup that raises `LinkedResourceNotFoundException`, and the duplicate-id check — is only reached when the request is already known to be JSON. A client that sends `application/xml` or `text/plain` is rejected at the dispatch stage, which keeps the method body free of format-handling branches and means XML payloads can never silently half-parse. Second, the 415 is a clear client contract: retrying the same payload will never succeed, only re-encoding it as JSON will. This is categorically different from a 500, which a client might reasonably retry assuming a transient server fault.
+Two consequences follow for the present API. First, the referential-integrity check inside `service/SensorService.create` — the `roomDAO.getById` lookup that raises `LinkedResourceNotFoundException` when the declared `roomId` does not exist — is only reached when the request is already known to be JSON. A client that sends `application/xml` or `text/plain` is rejected at the dispatch stage, which keeps the service method body free of format-handling branches and means a non-JSON payload can never silently half-parse. Second, the 415 is a clear client contract: retrying the same payload will never succeed, only re-encoding it as JSON will. That is categorically different from a 500, which a client might reasonably retry assuming a transient server fault.
 
 `@Consumes` and its sibling `@Produces` both participate in this negotiation but in opposite directions. `@Produces` is matched against the request's `Accept` header and a mismatch yields **HTTP 406 Not Acceptable** instead. The two together define the server's contract for a resource method: `@Consumes(APPLICATION_JSON) @Produces(APPLICATION_JSON)` reads as "I accept JSON and I respond with JSON". A missing `@Consumes` annotation would make the method accept any `Content-Type`, which is usually a bug waiting to happen because Jackson would then be asked to parse payloads it was never designed to handle. Declaring the annotation explicitly, as every POST in `SensorRoom`, `SensorResource`, and `SensorReadingResource` does, converts a class of malformed requests into a well-defined 415 response before any application code runs.
 
@@ -272,7 +285,7 @@ A sub-resource locator is a method that is annotated with `@Path` but **not** wi
 
 The first benefit is separation of concerns. `SensorResource` is responsible for sensors; `SensorReadingResource` is responsible for the readings that belong to one sensor. Neither class contains logic from the other's domain, and the split matches the natural join in the data model. A single mega-controller with `@Path("/sensors/{id}/readings")` sprinkled over half its methods quickly becomes the kind of 800-line file the coding-style rules in this project explicitly flag against.
 
-The second benefit is parent-context preparation. The locator is the ideal place to resolve and validate the parent entity once, pass it into the sub-resource's constructor, and let the sub-resource methods assume a non-null, valid parent. `SensorResource.readings` does exactly that: it looks the sensor up, throws `DataNotFoundException` if it is missing, and constructs `new SensorReadingResource(parent, sensorDAO)`. Both methods on the sub-resource (`getReadings` and `addReading`) can then focus on reading-specific rules — the maintenance-state guard, the UUID assignment, the `currentValue` side effect — without re-fetching the sensor or repeating the null check.
+The second benefit is scoped parent context. The locator receives the `sensorId` path parameter and passes only that identifier to the sub-resource's constructor: `new SensorReadingResource(sensorId)`. Each method on the sub-resource resolves the parent through `SensorReadingService` at the moment it needs it, and the service converts a missing parent into an `Optional.empty()` that the resource method renders as an inline `404 Response`. Holding the identifier rather than a captured `Sensor` object keeps the sub-resource immune to stale snapshots: if another thread mutates the parent between the locator firing and the sub-resource method running, the method sees the fresh state. The MAINTENANCE guard, the UUID assignment, and the `currentValue` side-effect all live inside `SensorReadingService.record`, so the resource body is a thin dispatcher rather than a business-rule container.
 
 The third benefit is recursion. Nesting scales. A reading could, in a larger system, acquire its own annotations sub-resource (`/sensors/{id}/readings/{rid}/annotations`) simply by adding another locator inside `SensorReadingResource`. The top-level class neither grows nor becomes entangled in the new hierarchy. The pattern is also friendlier to testing: `SensorReadingResource` is a plain Java class with a straightforward constructor, so it can be unit-tested by instantiation without bootstrapping the JAX-RS runtime.
 
@@ -292,15 +305,15 @@ The current implementation expresses this by throwing `LinkedResourceNotFoundExc
 
 An unfiltered stack trace is a reconnaissance gift. Four distinct classes of information leak out of it, and each one enables a different stage of an attack.
 
-**Internal paths and package structure.** Every frame in the trace carries a fully-qualified class name. A response that leaks `at com.w2120198.csa.cw.dao.GenericDAO.delete(GenericDAO.java:63)` simultaneously discloses the student identifier used as the root package, the two-letter module code embedded in it, and the service's internal layer split between `dao` and `resource`. An attacker now knows where business logic lives without decompiling anything.
+**Internal paths and package structure.** Every frame in the trace carries a fully-qualified class name. A response that leaks `at com.w2120198.csa.cw.service.RoomService.delete(RoomService.java:30)` simultaneously discloses the student identifier used as the root package, the two-letter module code embedded in it, and the project's three-tier layer split between `resource`, `service`, and `dao`. An attacker now knows where business logic lives without decompiling anything.
 
 **Library versions for CVE targeting.** Frames in stack traces frequently reference third-party classes — `org.glassfish.jersey.server.ServerRuntime$1.run`, `com.fasterxml.jackson.databind.ObjectMapper.readValue`. A manifest read or a casual cross-reference with `pom.xml` pins those libraries to specific versions. The National Vulnerability Database can then be queried for CVEs affecting Jersey 2.32 or the corresponding Jackson line; the attacker walks away with a list of known weaknesses already present in the deployment.
 
-**Logic flaws.** The line number and exception class together hint at the internal failure. A `NullPointerException at SensorRoom.deleteRoom:78` publicly admits that a particular request path hits a null dereference under some condition, and the exception type narrows the guess about which variable. An attacker can then craft payloads that deliberately reach that branch, either to exhaust the service with 500s or to probe for a crash that escapes the `ExceptionMapper` net.
+**Logic flaws.** The line number and exception class together hint at the internal failure. A `NullPointerException at SensorRoom.deleteRoom:30` publicly admits that a particular request path hits a null dereference under some condition, and the exception type narrows the guess about which variable. An attacker can then craft payloads that deliberately reach that branch, either to exhaust the service with 500s or to probe for a crash that escapes the `ExceptionMapper` net.
 
 **Server and runtime configuration.** Real-world traces have been known to include filesystem paths, operating user names, container flavours and versions, JVM flags, and, in genuinely bad cases, values of environment variables or JDBC URLs that were being logged at the moment of failure. None of this is information a legitimate API consumer needs.
 
-The remedy in this project is `exception/GenericExceptionMapper.java`. It declares `ExceptionMapper<Throwable>`, so it acts as the final safety net for anything no more specific mapper has claimed. It logs the full `Throwable` through `java.util.logging` for operators, then returns a hand-written JSON body containing a generic 500 message, the numeric status, and a documentation link — nothing about the internal path, the library, the line, or the JVM. The failure stays inside the process; the client sees only what is safe to share.
+The remedy in this project is `exception/GenericExceptionMapper.java`. It declares `ExceptionMapper<Throwable>`, so it acts as the final safety net for anything no more specific mapper has claimed. It logs the full `Throwable` through `java.util.logging` for operators, then returns a hand-written JSON body containing a generic 500 message and the numeric status — nothing about the internal path, the library, the line, or the JVM. The failure stays inside the process; the client sees only what is safe to share.
 
 ---
 
