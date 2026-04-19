@@ -217,7 +217,28 @@ The data that genuinely crosses request boundaries lives in the DAO classes. `da
 
 The specification's compound rule "delete a room only if it has no sensors" is a check then act sequence that spans both stores, and primitive list level locking is not enough to keep it safe under concurrent writes. Two race windows would otherwise violate the room sensor link invariant (a room's `sensorIds` list is empty if and only if no `Sensor` references the room): `RoomService.delete` could observe `sensorIds.isEmpty()` and remove the room between that check and a concurrent `SensorService.create` that was about to append a sensor id. `SensorService.create` could confirm the parent exists and be interrupted by a concurrent `RoomService.delete` that saw the same empty `sensorIds` and finished before the create appended the new id. Either race orphans a sensor.
 
-`dao/RoomDAO.java` declares a `public static final Object LINK_LOCK`, a dedicated shared monitor, and both `service/RoomService.delete` and `service/SensorService.create` acquire it at the top of their critical section. `delete` holds the lock across the empty check and the removal. `create` holds it across the parent lookup, the sensor insert, and the `sensorIds` append. Serialising only those two operations keeps the invariant intact. Ordinary reads stay concurrent, and sensor reading appends take independent locks on the readings store so the POST reading path is unaffected.
+`dao/RoomDAO.java` declares a `public static final Object LINK_LOCK`, a dedicated shared monitor, and both `service/RoomService.delete` and `service/SensorService.create` acquire it at the top of their critical section. The delete path is shown below. `create` wraps its own parent lookup, sensor insert, and `sensorIds` append in an identical `synchronized (RoomDAO.LINK_LOCK)` block.
+
+```java
+public boolean delete(String id) throws RoomNotEmptyException {
+    synchronized (RoomDAO.LINK_LOCK) {
+        Room existing = roomDAO.getById(id);
+        if (existing == null) {
+            return false;
+        }
+        if (!existing.getSensorIds().isEmpty()) {
+            throw new RoomNotEmptyException(
+                "Room '" + id + "' still has "
+                + existing.getSensorIds().size()
+                + " active sensor(s) assigned and cannot be deleted.");
+        }
+        roomDAO.delete(id);
+        return true;
+    }
+}
+```
+
+Serialising only those two operations keeps the invariant intact. Ordinary reads stay concurrent, and sensor reading appends take independent locks on the readings store so the POST reading path is unaffected.
 
 ### 7.2 Part 1.2, Hypermedia and HATEOAS
 
@@ -225,7 +246,24 @@ The specification's compound rule "delete a room only if it has no sensors" is a
 
 HATEOAS (Hypermedia As The Engine Of Application State) is the practice of including navigational links inside API responses so a client can discover the available state transitions dynamically rather than hard coding them from documentation. The coursework specification describes it as the hallmark of advanced RESTful design because it completes the separation between the client's model of the service and the server's URI scheme. When a response carries the links a client needs for its next request, the server is free to move endpoints, rename path segments, or move to a new version so long as the hypermedia in the responses stays internally consistent.
 
-`resource/DiscoveryResource.java` is the practical entry point for this pattern in the present API. `GET /api/v1` returns a JSON object containing an `administrator` block, a `version` field, and a `resources` map that lists every top level collection together with its absolute URI (`"rooms": "http://.../api/v1/rooms"` and `"sensors": ".../api/v1/sensors"`). The URIs are built at request time from `UriInfo.getBaseUriBuilder()` so the response reflects the runtime deployment without any hard coded values. A well behaved client bookmarks only the discovery URL and follows the `resources` map from there. If the university were to redeploy the service behind a different context root, the discovery response would change and the client would adapt without a code release.
+`resource/DiscoveryResource.java` is the practical entry point for this pattern in the present API. `GET /api/v1` returns a JSON object containing an `administrator` block, a `version` field, and a `resources` map that lists every top level collection together with its absolute URI. A representative response looks like this:
+
+```json
+{
+  "apiName": "Smart Campus Sensor & Room Management API",
+  "version": "1.0.0",
+  "administrator": {
+    "name": "Ranuga Disansa Gamage",
+    "email": "ranuga.20231264@iit.ac.lk"
+  },
+  "resources": {
+    "rooms": "http://localhost:8080/smart-campus-sensor-and-room-management-api/api/v1/rooms",
+    "sensors": "http://localhost:8080/smart-campus-sensor-and-room-management-api/api/v1/sensors"
+  }
+}
+```
+
+The URIs are built at request time from `UriInfo.getBaseUriBuilder()` so the response reflects the runtime deployment without any hard coded values. A well behaved client bookmarks only the discovery URL and follows the `resources` map from there. If the university were to redeploy the service behind a different context root, the discovery response would change and the client would adapt without a code release.
 
 The benefit over static documentation is practical rather than theoretical. A PDF reference or a README sample URL is an external mirror of the server's URI scheme that drifts the moment the code changes. a PDF written at version 1.0 is usually inaccurate by version 1.2. A live discovery response is produced by the same code that handles the requests, so the contract cannot be out of sync with the code that produced it. Hypermedia also lets the server express conditional availability through the presence or absence of links. A sensor in `ACTIVE` state could ship with a `post-reading` link, while the same sensor in `MAINTENANCE` could ship without it, so a hypermedia literate client could disable the "record a reading" button in its user interface without a round trip to discover the 403. A room that still holds sensors could similarly publish a `sensors` link but omit a `delete` link, mirroring the business rule that drives the 409 response on deletion.
 
@@ -235,7 +273,32 @@ The benefit over static documentation is practical rather than theoretical. A PD
 
 The trade off is between a single round trip response that may carry unused fields and a thin identifier list that forces a second round trip for every detail view.
 
-Returning ID only collections keeps the `GET /rooms` payload minimal. For a campus with several thousand rooms, a response of the form `["LIB-301", "LEC-101", ...]` is an order of magnitude smaller than the corresponding full object list, which is attractive for mobile clients on cellular links and for dashboards that only need to populate a drop down. The cost is the N+1 network problem: a user interface that then wants to render each room's name or capacity must issue one `GET /rooms/{id}` per identifier. Each extra request carries the TCP/TLS handshake cost, the servlet dispatch, and a fresh JSON serialisation, so the aggregate cost can easily exceed the original bandwidth savings.
+Returning ID only collections keeps the `GET /rooms` payload minimal. An ID only response looks like this:
+
+```json
+["LIB-301", "LEC-101", "LAB-201"]
+```
+
+A full object response of the same collection looks like this:
+
+```json
+[
+  {
+    "id": "LIB-301",
+    "name": "Library Quiet Study",
+    "capacity": 40,
+    "sensorIds": ["TEMP-001"]
+  },
+  {
+    "id": "LEC-101",
+    "name": "Lecture Hall A",
+    "capacity": 120,
+    "sensorIds": []
+  }
+]
+```
+
+For a campus with several thousand rooms, the ID only form is an order of magnitude smaller than the full object list, which is attractive for mobile clients on cellular links and for dashboards that only need to populate a drop down. The cost is the N+1 network problem: a user interface that then wants to render each room's name or capacity must issue one `GET /rooms/{id}` per identifier. Each extra request carries the TCP/TLS handshake cost, the servlet dispatch, and a fresh JSON serialisation, so the aggregate cost can easily exceed the original bandwidth savings.
 
 Returning full objects, the approach taken by `SensorRoom.getAllRooms()` in `resource/SensorRoom.java`, solves the N+1 problem at the cost of a larger single response. The decision is defensible here because a `Room` is small (an identifier, a display name, an integer capacity, and a short list of sensor ids) and the campus inventory is bounded. The marginal payload size is predictable even in the worst case.
 
@@ -252,6 +315,14 @@ Tracing the three cases against `SensorRoom.deleteRoom` in `resource/SensorRoom.
 1. **First call on a room with no sensors.** `roomService.delete(roomId)` looks up the entity, finds the `sensorIds` collection empty, removes the room from the in memory list, and returns `true`. The resource converts that into `204 No Content`. The server state after this call contains no such room.
 2. **Second identical call.** `roomService.delete(roomId)` fails its lookup, `roomDAO.getById(roomId)` now returns `null`, and the service returns `false`. The resource maps the `false` return value to an inline `404 Not Found` response with an `ErrorMessage` body. The server state does not change: the room is still absent.
 3. **Third, fourth, ... call.** Exactly the same as call 2. The 404 body is deterministic and the store is untouched.
+
+The observable sequence of status codes for the same request sent three times against a room that starts with no sensors is:
+
+```
+DELETE /rooms/LIB-301      first call    →   204 No Content
+DELETE /rooms/LIB-301      second call   →   404 Not Found
+DELETE /rooms/LIB-301      third call    →   404 Not Found
+```
 
 The status codes differ between call 1 and calls 2+, but the property required by idempotency is satisfied: after any non zero number of identical `DELETE /rooms/{id}` requests, the room is absent. A client that retries a lost acknowledgement therefore converges on the same outcome as one that succeeded on the first attempt, which is exactly the network resilience property the REST community attributes to idempotent verbs.
 
@@ -282,7 +353,18 @@ Two consequences follow for the present API. First, the referential integrity ch
 
 REST draws a sharp line between identifying a resource and selecting a projection of one. The path identifies, the query refines. `/api/v1/sensors` identifies the whole sensor collection. `/api/v1/sensors?type=CO2` refines the representation the server returns to a filtered subset of that same collection. The URI is unchanged, so cache keys, link relations, and the collection's identity all stay stable regardless of how many filters the client applies.
 
-Encoding the filter in the path, as in the hypothetical `/api/v1/sensors/type/CO2`, fabricates a resource hierarchy that does not exist in the domain. It implies that `type` is a container with `CO2` as a member, which invites a proliferation of virtual paths: `/sensors/status/ACTIVE`, `/sensors/room/LIB-301`, and then the combinatorial explosion of `/sensors/type/CO2/status/ACTIVE/room/LIB-301`. Each of those paths needs its own route, its own test, and its own place in the discovery document. Query parameters compose naturally in a single method signature. `SensorResource.getSensors` in `resource/SensorResource.java` already demonstrates the pattern with `@QueryParam("type") String type`, and adding a status filter is a one line addition of a second `@QueryParam`, not a new endpoint.
+Encoding the filter in the path, as in the hypothetical `/api/v1/sensors/type/CO2`, fabricates a resource hierarchy that does not exist in the domain. It implies that `type` is a container with `CO2` as a member, which invites a proliferation of virtual paths: `/sensors/status/ACTIVE`, `/sensors/room/LIB-301`, and then the combinatorial explosion of `/sensors/type/CO2/status/ACTIVE/room/LIB-301`. Each of those paths needs its own route, its own test, and its own place in the discovery document. Query parameters compose naturally in a single method signature. The handler on `resource/SensorResource.java` is shown below, and adding a status filter is a one line addition of a second `@QueryParam` rather than a new endpoint:
+
+```java
+@GET
+@Produces(MediaType.APPLICATION_JSON)
+public List<Sensor> getSensors(@QueryParam("type") String type) {
+    if (type == null || type.trim().isEmpty()) {
+        return sensorService.listAll();
+    }
+    return sensorService.listByType(type);
+}
+```
 
 Query parameters also keep the "no filter" case free. Omit the `type` parameter and the endpoint returns the entire collection, which is the natural default behaviour. A path segment filter cannot degrade to "no filter" without a special case path such as `/sensors/type/all`, which is both awkward and collides with the normal lookup case.
 
@@ -292,7 +374,16 @@ The principle generalises: use path segments for anything that has a genuine "re
 
 **Question.** Discuss the architectural benefits of the Sub Resource Locator pattern. How does delegating logic to separate classes help manage complexity in large APIs compared to defining every nested path (e.g., `sensors/{id}/readings/{rid}`) in one massive controller class?
 
-A sub resource locator is a method that is annotated with `@Path` but **not** with an HTTP method annotation. It returns an object whose own `@Path`-annotated methods handle the remainder of the URI. In the present API, `SensorResource.readings(@PathParam("sensorId") String sensorId)` in `resource/SensorResource.java` fulfils that role: JAX-RS picks it up when a request arrives for `/sensors/{sensorId}/readings`, Jersey invokes the locator, and the returned `SensorReadingResource` instance takes over dispatch for the remaining path segments.
+A sub resource locator is a method that is annotated with `@Path` but **not** with an HTTP method annotation. It returns an object whose own `@Path`-annotated methods handle the remainder of the URI. The locator on `resource/SensorResource.java` is shown below:
+
+```java
+@Path("/{sensorId}/readings")
+public SensorReadingResource readings(@PathParam("sensorId") String sensorId) {
+    return new SensorReadingResource(sensorId);
+}
+```
+
+JAX-RS picks up this method when a request arrives for `/sensors/{sensorId}/readings`, Jersey invokes the locator, and the returned `SensorReadingResource` instance takes over dispatch for the remaining path segments.
 
 The first benefit is separation of concerns. `SensorResource` is responsible for sensors. `SensorReadingResource` is responsible for the readings that belong to one sensor. Neither class contains logic from the other's domain, and the split matches the natural join in the data model. A single mega controller with `@Path("/sensors/{id}/readings")` sprinkled over half its methods quickly becomes the kind of 800 line file the coding style rules in this project explicitly flag against.
 
