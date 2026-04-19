@@ -27,16 +27,21 @@ public class RoomService {
     }
 
     public boolean delete(String id) {
-        Room existing = roomDAO.getById(id);
-        if (existing == null) {
-            return false;
+        // Held across the check (sensorIds.isEmpty()) and the delete so a
+        // concurrent SensorService.create cannot slip a sensor into the
+        // room between the guard and the removal.
+        synchronized (RoomDAO.LINK_LOCK) {
+            Room existing = roomDAO.getById(id);
+            if (existing == null) {
+                return false;
+            }
+            if (existing.getSensorIds() != null && !existing.getSensorIds().isEmpty()) {
+                throw new RoomNotEmptyException(
+                        "Room '" + id + "' still has " + existing.getSensorIds().size()
+                        + " active sensor(s) assigned and cannot be deleted.");
+            }
+            roomDAO.delete(id);
+            return true;
         }
-        if (existing.getSensorIds() != null && !existing.getSensorIds().isEmpty()) {
-            throw new RoomNotEmptyException(
-                    "Room '" + id + "' still has " + existing.getSensorIds().size()
-                    + " active sensor(s) assigned and cannot be deleted.");
-        }
-        roomDAO.delete(id);
-        return true;
     }
 }

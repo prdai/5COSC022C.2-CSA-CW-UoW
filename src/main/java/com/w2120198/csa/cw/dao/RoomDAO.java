@@ -9,6 +9,15 @@ public class RoomDAO {
 
     private static final List<Room> ROOMS = Collections.synchronizedList(new ArrayList<>());
 
+    /**
+     * Shared monitor for critical sections that span both the room store and
+     * the sensor store. SensorService.create and RoomService.delete each
+     * read the parent room, decide, and then mutate both stores; both must
+     * synchronise on this lock before the read so their check-then-act
+     * sequences cannot interleave.
+     */
+    public static final Object LINK_LOCK = new Object();
+
     public List<Room> getAll() {
         synchronized (ROOMS) {
             return new ArrayList<>(ROOMS);
@@ -48,7 +57,13 @@ public class RoomDAO {
 
     public boolean delete(String id) {
         synchronized (ROOMS) {
-            return ROOMS.removeIf(r -> r.getId().equals(id));
+            for (int i = 0; i < ROOMS.size(); i++) {
+                if (ROOMS.get(i).getId().equals(id)) {
+                    ROOMS.remove(i);
+                    return true;
+                }
+            }
+            return false;
         }
     }
 }

@@ -28,14 +28,19 @@ public class SensorService {
     }
 
     public Sensor create(Sensor sensor) {
-        Room parent = roomDAO.getById(sensor.getRoomId());
-        if (parent == null) {
-            throw new LinkedResourceNotFoundException(
-                    "Sensor cannot be created: roomId '" + sensor.getRoomId() + "' does not exist.");
+        // Held across the parent lookup, the sensor insert, and the room
+        // update so a concurrent RoomService.delete cannot remove the
+        // parent between our existence check and the sensorIds append.
+        synchronized (RoomDAO.LINK_LOCK) {
+            Room parent = roomDAO.getById(sensor.getRoomId());
+            if (parent == null) {
+                throw new LinkedResourceNotFoundException(
+                        "Sensor cannot be created: roomId '" + sensor.getRoomId() + "' does not exist.");
+            }
+            sensorDAO.add(sensor);
+            parent.getSensorIds().add(sensor.getId());
+            roomDAO.update(parent);
+            return sensor;
         }
-        sensorDAO.add(sensor);
-        parent.getSensorIds().add(sensor.getId());
-        roomDAO.update(parent);
-        return sensor;
     }
 }
