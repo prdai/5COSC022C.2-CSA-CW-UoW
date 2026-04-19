@@ -308,7 +308,7 @@ The one compromise already built into the current shape is that `Room.sensorIds`
 
 **Question.** Is the `DELETE` operation idempotent in your implementation? Provide a detailed justification by describing what happens if a client mistakenly sends the exact same `DELETE` request for a room multiple times.
 
-Yes, and the crucial distinction is that idempotency is defined on the **server state** that results from the request, not on the response the client observes. RFC 7231 §4.2.2 puts it precisely: a method is idempotent if the intended effect of N identical requests (for N ≥ 1) is the same as the effect of a single request.
+Yes, and the crucial distinction is that idempotency is defined on the **server state** that results from the request, not on the response the client observes. RFC 7231 section 4.2.2 puts it precisely: a method is idempotent if the intended effect of N identical requests (for N ≥ 1) is the same as the effect of a single request.
 
 Tracing the three cases against `SensorRoom.deleteRoom` in `resource/SensorRoom.java`, which delegates to `service/RoomService.java`:
 
@@ -448,6 +448,6 @@ The remedy in this project is `exception/GenericExceptionMapper.java`. It declar
 - Jersey 2.32 user guide, https://eclipse-ee4j.github.io/jersey.github.io/documentation/2.32/user-guide.html
 - JAX-RS 2.1 specification (JSR 370), https://jakarta.ee/specifications/restful-ws/2.1/
 - Jackson databind, https://github.com/FasterXML/jackson-databind
-- IETF RFC 7231 §4.2.2 Idempotent Methods, https://datatracker.ietf.org/doc/html/rfc7231#section-4.2.2
-- IETF RFC 7231 §6.5.6 (406 Not Acceptable), https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.6
-- IETF RFC 7231 §6.5.13 (415 Unsupported Media Type), https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.13
+- IETF RFC 7231 section 4.2.2 Idempotent Methods, https://datatracker.ietf.org/doc/html/rfc7231#section-4.2.2
+- IETF RFC 7231 section 6.5.6 (406 Not Acceptable), https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.6
+- IETF RFC 7231 section 6.5.13 (415 Unsupported Media Type), https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.13
