@@ -1,14 +1,21 @@
 package com.w2120198.csa.cw.exception;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.w2120198.csa.cw.model.ErrorMessage;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import javax.ws.rs.WebApplicationException;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
-import javax.ws.rs.core.Response.Status;
 import javax.ws.rs.ext.ExceptionMapper;
 import javax.ws.rs.ext.Provider;
 
+/**
+ * Catch-all mapper. Whatever no more specific mapper has claimed lands here.
+ * WebApplicationException keeps its original HTTP status, Jackson parse
+ * failures become 400, and everything else becomes a generic 500 so
+ * internals never leak to the client.
+ */
 @Provider
 public class GenericExceptionMapper implements ExceptionMapper<Throwable> {
 
@@ -16,13 +23,25 @@ public class GenericExceptionMapper implements ExceptionMapper<Throwable> {
 
     @Override
     public Response toResponse(Throwable exception) {
-        LOGGER.log(Level.SEVERE, "Unhandled error bubbled to global mapper", exception);
-        ErrorMessage body = new ErrorMessage(
-                "The server encountered an unexpected error.",
-                Status.INTERNAL_SERVER_ERROR.getStatusCode());
-        return Response.status(Status.INTERNAL_SERVER_ERROR)
+        int status;
+        String message;
+
+        if (exception instanceof WebApplicationException) {
+            WebApplicationException wae = (WebApplicationException) exception;
+            status = wae.getResponse().getStatus();
+            message = wae.getMessage() != null ? wae.getMessage() : "Request could not be completed.";
+        } else if (exception instanceof JsonProcessingException) {
+            status = 400;
+            message = "Request body was not valid JSON.";
+        } else {
+            LOGGER.log(Level.SEVERE, "Unhandled error bubbled to global mapper", exception);
+            status = 500;
+            message = "The server encountered an unexpected error.";
+        }
+
+        return Response.status(status)
                 .type(MediaType.APPLICATION_JSON)
-                .entity(body)
+                .entity(new ErrorMessage(message, status))
                 .build();
     }
 }
