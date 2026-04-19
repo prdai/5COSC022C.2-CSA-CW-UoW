@@ -11,10 +11,9 @@ import javax.ws.rs.ext.ExceptionMapper;
 import javax.ws.rs.ext.Provider;
 
 /**
- * Catch-all mapper. Whatever no more specific mapper has claimed lands here.
- * WebApplicationException keeps its original HTTP status, Jackson parse
- * failures become 400, and everything else becomes a generic 500 so
- * internals never leak to the client.
+ * Fallback mapper. WebApplicationException keeps its original HTTP status,
+ * Jackson parse failures become 400, anything else becomes a generic 500
+ * so no stack trace leaks to the client.
  */
 @Provider
 public class GenericExceptionMapper implements ExceptionMapper<Throwable> {

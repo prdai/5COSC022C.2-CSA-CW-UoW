@@ -5,4 +5,5 @@ import javax.ws.rs.core.Application;
 
 @ApplicationPath("/api/v1")
 public class SmartCampusApplication extends Application {
+    // Jersey scans the classpath for @Path classes, so no getClasses() override needed
 }

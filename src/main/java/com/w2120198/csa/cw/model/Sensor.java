@@ -2,10 +2,12 @@ package com.w2120198.csa.cw.model;
 
 public class Sensor {
 
+    // the one status that has behaviour: SensorReadingService blocks readings when it matches
     public static final String STATUS_MAINTENANCE = "MAINTENANCE";
 
     private String id;
     private String type;
+    // kept as String to match the spec POJO, an enum would be nicer for type safety but drifts from the template
     private String status;
     private double currentValue;
     private String roomId;
