@@ -6,6 +6,8 @@ import com.w2120198.csa.cw.model.Room;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import javax.ws.rs.WebApplicationException;
+import javax.ws.rs.core.Response;
 
 public class RoomService {
 
@@ -19,10 +21,26 @@ public class RoomService {
         return Optional.ofNullable(roomDAO.getById(id));
     }
 
-    public Room create(Room room) {
-        // ignore what the client sent for sensorIds, it's filled in when sensors register
-        room.setSensorIds(new ArrayList<>());
-        roomDAO.add(room);
+    public Room create(Room room) throws WebApplicationException {
+        if (room.getId() == null || room.getId().trim().isEmpty()) {
+            throw new WebApplicationException("Room id is required.", Response.Status.BAD_REQUEST);
+        }
+        if (room.getName() == null || room.getName().trim().isEmpty()) {
+            throw new WebApplicationException("Room name is required.", Response.Status.BAD_REQUEST);
+        }
+        if (room.getCapacity() < 0) {
+            throw new WebApplicationException("Room capacity cannot be negative.", Response.Status.BAD_REQUEST);
+        }
+        synchronized (RoomDAO.LINK_LOCK) {
+            if (roomDAO.getById(room.getId()) != null) {
+                throw new WebApplicationException(
+                        "Room with id '" + room.getId() + "' already exists.",
+                        Response.Status.CONFLICT);
+            }
+            // ignore what the client sent for sensorIds, it's filled in when sensors register
+            room.setSensorIds(new ArrayList<>());
+            roomDAO.add(room);
+        }
         return room;
     }
 
