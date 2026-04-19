@@ -226,11 +226,10 @@ public boolean delete(String id) throws RoomNotEmptyException {
         if (existing == null) {
             return false;
         }
-        if (!existing.getSensorIds().isEmpty()) {
+        if (existing.getSensorIds() != null && !existing.getSensorIds().isEmpty()) {
             throw new RoomNotEmptyException(
-                "Room '" + id + "' still has "
-                + existing.getSensorIds().size()
-                + " active sensor(s) assigned and cannot be deleted.");
+                    "Room '" + id + "' still has " + existing.getSensorIds().size()
+                    + " active sensor(s) assigned and cannot be deleted.");
         }
         roomDAO.delete(id);
         return true;
@@ -316,12 +315,21 @@ Tracing the three cases against `SensorRoom.deleteRoom` in `resource/SensorRoom.
 2. **Second identical call.** `roomService.delete(roomId)` fails its lookup, `roomDAO.getById(roomId)` now returns `null`, and the service returns `false`. The resource maps the `false` return value to an inline `404 Not Found` response with an `ErrorMessage` body. The server state does not change: the room is still absent.
 3. **Third, fourth, ... call.** Exactly the same as call 2. The 404 body is deterministic and the store is untouched.
 
-The observable sequence of status codes for the same request sent three times against a room that starts with no sensors is:
+The observable sequence of status codes for the same request sent three times against a room that starts with no sensors is shown below.
 
-```
-DELETE /rooms/LIB-301      first call    →   204 No Content
-DELETE /rooms/LIB-301      second call   →   404 Not Found
-DELETE /rooms/LIB-301      third call    →   404 Not Found
+```mermaid
+sequenceDiagram
+    actor Client
+    participant API as /rooms/LIB-301
+    Client->>API: DELETE (first call)
+    API-->>Client: 204 No Content
+    Note over API: room removed from store
+    Client->>API: DELETE (second call)
+    API-->>Client: 404 Not Found
+    Note over API: store unchanged
+    Client->>API: DELETE (third call)
+    API-->>Client: 404 Not Found
+    Note over API: store unchanged
 ```
 
 The status codes differ between call 1 and calls 2+, but the property required by idempotency is satisfied: after any non zero number of identical `DELETE /rooms/{id}` requests, the room is absent. A client that retries a lost acknowledgement therefore converges on the same outcome as one that succeeded on the first attempt, which is exactly the network resilience property the REST community attributes to idempotent verbs.
@@ -419,19 +427,7 @@ The current implementation expresses this by throwing `LinkedResourceNotFoundExc
 
 An unfiltered stack trace is a reconnaissance gift. Four distinct classes of information leak out of it, and each one enables a different stage of an attack.
 
-**Internal paths and package structure.** Every frame in the trace carries a fully qualified class name. Consider a trace of the form below, which is what an unhandled `NullPointerException` inside the delete path would produce if it reached the client:
-
-```
-java.lang.NullPointerException
-    at com.w2120198.csa.cw.service.RoomService.delete(RoomService.java:30)
-    at com.w2120198.csa.cw.resource.SensorRoom.deleteRoom(SensorRoom.java:52)
-    at org.glassfish.jersey.server.model.internal.JavaResourceMethodDispatcherProvider$ResponseOutInvoker.doDispatch(JavaResourceMethodDispatcherProvider.java:176)
-    at org.glassfish.jersey.server.ServerRuntime$1.run(ServerRuntime.java:255)
-    at org.apache.catalina.core.StandardWrapperValve.invoke(StandardWrapperValve.java:168)
-    ... 42 more
-```
-
-A response that leaks this trace simultaneously discloses the student identifier used as the root package, the two letter module code embedded in it, the project's three tier layer split between `resource`, `service`, and `dao`, and the exact line where the failure happens. An attacker now knows where business logic lives without decompiling anything.
+**Internal paths and package structure.** Every frame in the trace carries a fully qualified class name such as `com.w2120198.csa.cw.service.RoomService.delete`. A single frame of that form simultaneously discloses the student identifier used as the root package, the two letter module code embedded in it, the project's three tier layer split between `resource`, `service`, and `dao`, and the exact line where the failure happened. An attacker now knows where business logic lives without decompiling anything.
 
 **Library versions for CVE targeting.** Frames in stack traces frequently reference third party classes, `org.glassfish.jersey.server.ServerRuntime$1.run`, `com.fasterxml.jackson.databind.ObjectMapper.readValue`. A manifest read or a casual cross reference with `pom.xml` pins those libraries to specific versions. The National Vulnerability Database can then be queried for CVEs affecting Jersey 2.32 or the corresponding Jackson line. the attacker walks away with a list of known weaknesses already present in the deployment.
 
