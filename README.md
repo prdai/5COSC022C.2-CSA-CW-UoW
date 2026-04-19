@@ -207,9 +207,9 @@ smart-campus-sensor-and-room-management-api/
 
 The questions below are transcribed verbatim from the coursework specification. Each answer cites the file in which the relevant implementation lives. File paths are relative to the project root (`smart-campus-sensor-and-room-management-api/`).
 
-### 7.1 Part 1.1, JAX-RS resource lifecycle and in memory thread safety
+### Question 1, JAX-RS resource lifecycle and in memory thread safety
 
-**Question.** Explain the default lifecycle of a JAX-RS Resource class. Is a new instance instantiated for every incoming request, or does the runtime treat it as a singleton? Elaborate on how this architectural decision impacts the way you manage and synchronize your in memory data structures (maps/lists) to prevent data loss or race conditions.
+**Question.** In your report, explain the default lifecycle of a JAX-RS Resource class. Is a new instance instantiated for every incoming request, or does the runtime treat it as a singleton? Elaborate on how this architectural decision impacts the way you manage and synchronize your in-memory data structures (maps/lists) to prevent data loss or race conditions.
 
 By default, Jersey creates a fresh instance of each resource class for every incoming request. The JAX-RS specification calls this the "per request" lifecycle, and it is the behaviour used throughout this project because no resource class is annotated with `@Singleton` and no explicit binding is registered in `SmartCampusApplication.java`. The practical consequence is that instance fields on a resource class are thread confined: `SensorRoom`, `SensorResource`, and `SensorReadingResource` each hold a service layer collaborator as an instance field, and those fields are only visible to the thread handling the request that triggered the resource's construction.
 
@@ -240,7 +240,7 @@ public boolean delete(String id) throws RoomNotEmptyException {
 
 Serialising only those two operations keeps the invariant intact. Ordinary reads stay concurrent, and sensor reading appends take independent locks on the readings store so the POST reading path is unaffected.
 
-### 7.2 Part 1.2, Hypermedia and HATEOAS
+### Question 2, Hypermedia and HATEOAS
 
 **Question.** Why is the provision of "Hypermedia" (links and navigation within responses) considered a hallmark of advanced RESTful design (HATEOAS)? How does this approach benefit client developers compared to static documentation?
 
@@ -267,7 +267,7 @@ The URIs are built at request time from `UriInfo.getBaseUriBuilder()` so the res
 
 The benefit over static documentation is practical rather than theoretical. A PDF reference or a README sample URL is an external mirror of the server's URI scheme that drifts the moment the code changes. a PDF written at version 1.0 is usually inaccurate by version 1.2. A live discovery response is produced by the same code that handles the requests, so the contract cannot be out of sync with the code that produced it. Hypermedia also lets the server express conditional availability through the presence or absence of links. A sensor in `ACTIVE` state could ship with a `post-reading` link, while the same sensor in `MAINTENANCE` could ship without it, so a hypermedia literate client could disable the "record a reading" button in its user interface without a round trip to discover the 403. A room that still holds sensors could similarly publish a `sensors` link but omit a `delete` link, mirroring the business rule that drives the 409 response on deletion.
 
-### 7.3 Part 2.1, Returning IDs versus full objects in list endpoints
+### Question 3, Returning IDs versus full objects in list endpoints
 
 **Question.** When returning a list of rooms, what are the implications of returning only IDs versus returning the full room objects? Consider network bandwidth and client side processing.
 
@@ -304,7 +304,7 @@ Returning full objects, the approach taken by `SensorRoom.getAllRooms()` in `res
 
 The one compromise already built into the current shape is that `Room.sensorIds` contains only sensor identifiers rather than full `Sensor` objects. A room carries the ids of the sensors it hosts, but the full sensor data lives at the `/sensors` endpoint or through the filtered `/sensors?type=...` view. That avoids duplicating the sensor projection inside every room response, keeps cache invalidation per resource, and leaves the sensor collection autonomous. The present API does not implement pagination or field selection parameters because the specification does not require them and the bounded campus inventory makes them unnecessary at the current scale.
 
-### 7.4 Part 2.2, DELETE idempotency
+### Question 4, DELETE idempotency
 
 **Question.** Is the `DELETE` operation idempotent in your implementation? Provide a detailed justification by describing what happens if a client mistakenly sends the exact same `DELETE` request for a room multiple times.
 
@@ -328,7 +328,7 @@ The status codes differ between call 1 and calls 2+, but the property required b
 
 The 409 Conflict case ("room still has sensors") does not threaten this guarantee. A 409 response leaves the room exactly where it was, so the server state is unchanged on every repetition. the response is also deterministic until some other request removes the dependent sensors, at which point the next `DELETE` will succeed and subsequent ones will revert to the 404 pattern above. The operation therefore stays idempotent in the presence of the business rule.
 
-### 7.5 Part 3.1, `@Consumes` mismatch consequences
+### Question 5, `@Consumes` mismatch consequences
 
 **Question.** We explicitly use the `@Consumes(MediaType.APPLICATION_JSON)` annotation on the POST method. Explain the technical consequences if a client attempts to send data in a different format, such as `text/plain` or `application/xml`. How does JAX-RS handle this mismatch?
 
@@ -347,7 +347,7 @@ Two consequences follow for the present API. First, the referential integrity ch
 
 `@Consumes` and its sibling `@Produces` both participate in this negotiation but in opposite directions. `@Produces` is matched against the request's `Accept` header and a mismatch yields **HTTP 406 Not Acceptable** instead. The two together define the server's contract for a resource method: `@Consumes(APPLICATION_JSON) @Produces(APPLICATION_JSON)` reads as "I accept JSON and I respond with JSON". A missing `@Consumes` annotation would make the method accept any `Content-Type`, which is usually a bug waiting to happen because Jackson would then be asked to parse payloads it was never designed to handle. Declaring the annotation explicitly, as every POST in `SensorRoom`, `SensorResource`, and `SensorReadingResource` does, converts a class of malformed requests into a well defined 415 response before any application code runs.
 
-### 7.6 Part 3.2, `@QueryParam` versus `@PathParam` for filtering
+### Question 6, `@QueryParam` versus `@PathParam` for filtering
 
 **Question.** You implemented this filtering using `@QueryParam`. Contrast this with an alternative design where the type is part of the URL path (e.g., `/api/v1/sensors/type/CO2`). Why is the query parameter approach generally considered superior for filtering and searching collections?
 
@@ -370,9 +370,9 @@ Query parameters also keep the "no filter" case free. Omit the `type` parameter 
 
 The principle generalises: use path segments for anything that has a genuine "resource" character (a particular sensor identified by its id) and query parameters for anything that narrows, sorts, or paginates a collection. Mixing the two makes the URI schema harder to reason about without any expressive gain.
 
-### 7.7 Part 4.1, Benefits of the sub resource locator pattern
+### Question 7, Benefits of the sub resource locator pattern
 
-**Question.** Discuss the architectural benefits of the Sub Resource Locator pattern. How does delegating logic to separate classes help manage complexity in large APIs compared to defining every nested path (e.g., `sensors/{id}/readings/{rid}`) in one massive controller class?
+**Question.** Discuss the architectural benefits of the Sub-Resource Locator pattern. How does delegating logic to separate classes help manage complexity in large APIs compared to defining every nested path (e.g., `sensors/{id}/readings/{rid}`) in one massive controller class?
 
 A sub resource locator is a method that is annotated with `@Path` but **not** with an HTTP method annotation. It returns an object whose own `@Path`-annotated methods handle the remainder of the URI. The locator on `resource/SensorResource.java` is shown below:
 
@@ -391,7 +391,7 @@ The second benefit is scoped parent context. The locator receives the `sensorId`
 
 The third benefit is recursion. Nesting scales. A reading could, in a larger system, acquire its own annotations sub resource (`/sensors/{id}/readings/{rid}/annotations`) simply by adding another locator inside `SensorReadingResource`. The top level class neither grows nor becomes entangled in the new hierarchy. The pattern is also friendlier to testing: `SensorReadingResource` is a plain Java class with a straightforward constructor, so it can be unit tested by instantiation without bootstrapping the JAX-RS runtime.
 
-### 7.8 Part 5.1, Why 422 beats 404 for a broken reference in a valid payload
+### Question 8, Why 422 beats 404 for a broken reference in a valid payload
 
 **Question.** Why is HTTP 422 often considered more semantically accurate than a standard 404 when the issue is a missing reference inside a valid JSON payload?
 
@@ -413,7 +413,7 @@ This request falls squarely into the third category. The target URI `/sensors` *
 
 The current implementation expresses this by throwing `LinkedResourceNotFoundException` from `SensorResource.createSensor` and letting `LinkedResourceNotFoundExceptionMapper` render it as 422 with a JSON `ErrorMessage` body containing the offending `roomId`. That response tells the client three things simultaneously: the request was understood, re sending the same bytes will not change the outcome, and the fix is to create the referenced room first (or correct the id). A 404 response would ambiguously suggest that the sensors endpoint itself has disappeared, and a 400 would suggest a typo or missing field the client cannot actually find. 422 collapses the ambiguity.
 
-### 7.9 Part 5.2, Cybersecurity risks of leaked stack traces
+### Question 9, Cybersecurity risks of leaked stack traces
 
 **Question.** From a cybersecurity standpoint, explain the risks associated with exposing internal Java stack traces to external API consumers. What specific information could an attacker gather from such a trace?
 
