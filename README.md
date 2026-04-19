@@ -306,7 +306,19 @@ The third benefit is recursion. Nesting scales. A reading could, in a larger sys
 
 The three candidate statuses say very different things about the failure. HTTP 404 Not Found signals that the URI in the request line does not identify a resource. HTTP 400 Bad Request signals that the server cannot parse or syntactically validate the request: malformed JSON, missing required fields, or the wrong type in a field. HTTP 422 Unprocessable Entity signals that the request is syntactically well formed but semantically invalid: the server understands every byte of it but cannot act on it because a domain level constraint fails.
 
-`POST /api/v1/sensors` with a payload such as `{"id":"HEAT-999","roomId":"NOT-A-ROOM",...}` falls squarely into the third category. The target URI `/sensors` **does** exist, so 404 would misrepresent the problem (the resource the client is addressing is the sensors collection, and the collection is present and willing to accept registrations). The payload **is** valid JSON with every required field of the correct type, so 400 would also misrepresent it. What fails is referential integrity between the payload and existing server state: the room the client is pointing at was never created.
+Consider the payload below, sent as the body of a `POST /api/v1/sensors`:
+
+```json
+{
+  "id": "HEAT-999",
+  "roomId": "NOT-A-ROOM",
+  "type": "Temperature",
+  "status": "ACTIVE",
+  "currentValue": 19.0
+}
+```
+
+This request falls squarely into the third category. The target URI `/sensors` **does** exist, so 404 would misrepresent the problem (the resource the client is addressing is the sensors collection, and the collection is present and willing to accept registrations). The payload **is** valid JSON with every required field of the correct type, so 400 would also misrepresent it. What fails is referential integrity between the payload and existing server state: the room the client is pointing at was never created.
 
 The current implementation expresses this by throwing `LinkedResourceNotFoundException` from `SensorResource.createSensor` and letting `LinkedResourceNotFoundExceptionMapper` render it as 422 with a JSON `ErrorMessage` body containing the offending `roomId`. That response tells the client three things simultaneously: the request was understood, re sending the same bytes will not change the outcome, and the fix is to create the referenced room first (or correct the id). A 404 response would ambiguously suggest that the sensors endpoint itself has disappeared, and a 400 would suggest a typo or missing field the client cannot actually find. 422 collapses the ambiguity.
 
@@ -316,7 +328,13 @@ The current implementation expresses this by throwing `LinkedResourceNotFoundExc
 
 An unfiltered stack trace is a reconnaissance gift. Four distinct classes of information leak out of it, and each one enables a different stage of an attack.
 
-**Internal paths and package structure.** Every frame in the trace carries a fully qualified class name. A response that leaks `at com.w2120198.csa.cw.service.RoomService.delete(RoomService.java:30)` simultaneously discloses the student identifier used as the root package, the two letter module code embedded in it, and the project's three tier layer split between `resource`, `service`, and `dao`. An attacker now knows where business logic lives without decompiling anything.
+**Internal paths and package structure.** Every frame in the trace carries a fully qualified class name. Consider the following frame:
+
+```
+at com.w2120198.csa.cw.service.RoomService.delete(RoomService.java:30)
+```
+
+A response that leaks this single line simultaneously discloses the student identifier used as the root package, the two letter module code embedded in it, and the project's three tier layer split between `resource`, `service`, and `dao`. An attacker now knows where business logic lives without decompiling anything.
 
 **Library versions for CVE targeting.** Frames in stack traces frequently reference third party classes, `org.glassfish.jersey.server.ServerRuntime$1.run`, `com.fasterxml.jackson.databind.ObjectMapper.readValue`. A manifest read or a casual cross reference with `pom.xml` pins those libraries to specific versions. The National Vulnerability Database can then be queried for CVEs affecting Jersey 2.32 or the corresponding Jackson line. the attacker walks away with a list of known weaknesses already present in the deployment.
 
