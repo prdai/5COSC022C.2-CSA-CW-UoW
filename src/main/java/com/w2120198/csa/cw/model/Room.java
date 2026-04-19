@@ -47,7 +47,10 @@ public class Room {
         return sensorIds;
     }
 
-    public void setSensorIds(List<String> sensorIds) {
-        this.sensorIds = (sensorIds != null) ? sensorIds : new ArrayList<>();
+    public void setSensorIds(List<String> sensorIds) throws IllegalArgumentException {
+        if (sensorIds == null) {
+            throw new IllegalArgumentException("sensorIds must not be null");
+        }
+        this.sensorIds = sensorIds;
     }
 }

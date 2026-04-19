@@ -21,15 +21,17 @@ public class SensorReadingService {
         return Optional.of(readingDAO.getBySensorId(sensorId));
     }
 
-    public Optional<SensorReading> record(String sensorId, SensorReading reading) {
+    public Optional<SensorReading> record(String sensorId, SensorReading reading) throws SensorUnavailableException {
         Sensor parent = sensorDAO.getById(sensorId);
         if (parent == null) {
             return Optional.empty();
         }
+        // maintenance sensors are offline for readings, bounce with 403
         if (Sensor.STATUS_MAINTENANCE.equals(parent.getStatus())) {
             throw new SensorUnavailableException(
                     "Sensor '" + sensorId + "' is under MAINTENANCE and cannot accept readings.");
         }
+        // server assigns the id so clients can't collide or spoof
         reading.setId(UUID.randomUUID().toString());
         readingDAO.add(sensorId, reading);
 

@@ -27,10 +27,8 @@ public class SensorService {
         return filtered;
     }
 
-    public Sensor create(Sensor sensor) {
-        // Held across the parent lookup, the sensor insert, and the room
-        // update so a concurrent RoomService.delete cannot remove the
-        // parent between our existence check and the sensorIds append.
+    public Sensor create(Sensor sensor) throws LinkedResourceNotFoundException {
+        // lock covers the parent check through the sensorIds append so a concurrent room delete can't orphan the sensor
         synchronized (RoomDAO.LINK_LOCK) {
             Room parent = roomDAO.getById(sensor.getRoomId());
             if (parent == null) {

@@ -20,16 +20,14 @@ public class RoomService {
     }
 
     public Room create(Room room) {
-        // sensorIds is maintained server-side as sensors are registered.
+        // ignore what the client sent for sensorIds, it's filled in when sensors register
         room.setSensorIds(new ArrayList<>());
         roomDAO.add(room);
         return room;
     }
 
-    public boolean delete(String id) {
-        // Held across the check (sensorIds.isEmpty()) and the delete so a
-        // concurrent SensorService.create cannot slip a sensor into the
-        // room between the guard and the removal.
+    public boolean delete(String id) throws RoomNotEmptyException {
+        // lock covers both the empty check and the delete so a concurrent sensor create can't slip in
         synchronized (RoomDAO.LINK_LOCK) {
             Room existing = roomDAO.getById(id);
             if (existing == null) {
