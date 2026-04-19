@@ -33,7 +33,7 @@ public class SensorReadingService {
         reading.setId(UUID.randomUUID().toString());
         readingDAO.add(sensorId, reading);
 
-        // Spec Part 4.2: POST reading updates parent sensor's currentValue.
+        // keep the parent sensor's currentValue in sync with the newest reading
         parent.setCurrentValue(reading.getValue());
         sensorDAO.update(parent);
         return Optional.of(reading);

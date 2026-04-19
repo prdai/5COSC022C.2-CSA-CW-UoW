@@ -39,7 +39,7 @@ public class SensorResource {
         return Response.created(location).entity(saved).build();
     }
 
-    // Sub-resource locator — spec Part 4.1.
+    // readings have their own lifecycle so /readings lives in a dedicated resource
     @Path("/{sensorId}/readings")
     public SensorReadingResource readings(@PathParam("sensorId") String sensorId) {
         return new SensorReadingResource(sensorId);

@@ -4,7 +4,7 @@ import com.w2120198.csa.cw.model.ErrorMessage;
 import com.w2120198.csa.cw.model.SensorReading;
 import com.w2120198.csa.cw.service.SensorReadingService;
 import java.net.URI;
-import java.util.Optional;
+import java.util.List;
 import javax.ws.rs.Consumes;
 import javax.ws.rs.GET;
 import javax.ws.rs.POST;
@@ -26,21 +26,23 @@ public class SensorReadingResource {
     @GET
     @Produces(MediaType.APPLICATION_JSON)
     public Response getReadings() {
-        return readingService.historyFor(sensorId)
-                .map(list -> Response.ok(list).build())
-                .orElseGet(this::notFound);
+        List<SensorReading> history = readingService.historyFor(sensorId).orElse(null);
+        if (history == null) {
+            return notFound();
+        }
+        return Response.ok(history).build();
     }
 
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
     public Response addReading(SensorReading reading, @Context UriInfo uriInfo) {
-        Optional<SensorReading> saved = readingService.record(sensorId, reading);
-        if (!saved.isPresent()) {
+        SensorReading saved = readingService.record(sensorId, reading).orElse(null);
+        if (saved == null) {
             return notFound();
         }
-        URI location = uriInfo.getAbsolutePathBuilder().path(saved.get().getId()).build();
-        return Response.created(location).entity(saved.get()).build();
+        URI location = uriInfo.getAbsolutePathBuilder().path(saved.getId()).build();
+        return Response.created(location).entity(saved).build();
     }
 
     private Response notFound() {

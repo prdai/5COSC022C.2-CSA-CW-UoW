@@ -32,9 +32,11 @@ public class SensorRoom {
     @Path("/{roomId}")
     @Produces(MediaType.APPLICATION_JSON)
     public Response getRoomById(@PathParam("roomId") String roomId) {
-        return roomService.find(roomId)
-                .map(room -> Response.ok(room).build())
-                .orElseGet(() -> notFound(roomId));
+        Room room = roomService.find(roomId).orElse(null);
+        if (room == null) {
+            return notFound(roomId);
+        }
+        return Response.ok(room).build();
     }
 
     @POST

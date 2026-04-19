@@ -22,8 +22,16 @@ public class SensorReadingDAO {
     }
 
     public void add(String sensorId, SensorReading reading) {
-        List<SensorReading> list = HISTORY.computeIfAbsent(
-                sensorId, k -> Collections.synchronizedList(new ArrayList<>()));
+        List<SensorReading> list = HISTORY.get(sensorId);
+        if (list == null) {
+            List<SensorReading> fresh = Collections.synchronizedList(new ArrayList<SensorReading>());
+            List<SensorReading> existing = HISTORY.putIfAbsent(sensorId, fresh);
+            if (existing != null) {
+                list = existing;
+            } else {
+                list = fresh;
+            }
+        }
         list.add(reading);
     }
 }
