@@ -328,13 +328,19 @@ The current implementation expresses this by throwing `LinkedResourceNotFoundExc
 
 An unfiltered stack trace is a reconnaissance gift. Four distinct classes of information leak out of it, and each one enables a different stage of an attack.
 
-**Internal paths and package structure.** Every frame in the trace carries a fully qualified class name. Consider the following frame:
+**Internal paths and package structure.** Every frame in the trace carries a fully qualified class name. Consider a trace of the form below, which is what an unhandled `NullPointerException` inside the delete path would produce if it reached the client:
 
 ```
-at com.w2120198.csa.cw.service.RoomService.delete(RoomService.java:30)
+java.lang.NullPointerException
+    at com.w2120198.csa.cw.service.RoomService.delete(RoomService.java:30)
+    at com.w2120198.csa.cw.resource.SensorRoom.deleteRoom(SensorRoom.java:52)
+    at org.glassfish.jersey.server.model.internal.JavaResourceMethodDispatcherProvider$ResponseOutInvoker.doDispatch(JavaResourceMethodDispatcherProvider.java:176)
+    at org.glassfish.jersey.server.ServerRuntime$1.run(ServerRuntime.java:255)
+    at org.apache.catalina.core.StandardWrapperValve.invoke(StandardWrapperValve.java:168)
+    ... 42 more
 ```
 
-A response that leaks this single line simultaneously discloses the student identifier used as the root package, the two letter module code embedded in it, and the project's three tier layer split between `resource`, `service`, and `dao`. An attacker now knows where business logic lives without decompiling anything.
+A response that leaks this trace simultaneously discloses the student identifier used as the root package, the two letter module code embedded in it, the project's three tier layer split between `resource`, `service`, and `dao`, and the exact line where the failure happens. An attacker now knows where business logic lives without decompiling anything.
 
 **Library versions for CVE targeting.** Frames in stack traces frequently reference third party classes, `org.glassfish.jersey.server.ServerRuntime$1.run`, `com.fasterxml.jackson.databind.ObjectMapper.readValue`. A manifest read or a casual cross reference with `pom.xml` pins those libraries to specific versions. The National Vulnerability Database can then be queried for CVEs affecting Jersey 2.32 or the corresponding Jackson line. the attacker walks away with a list of known weaknesses already present in the deployment.
 
