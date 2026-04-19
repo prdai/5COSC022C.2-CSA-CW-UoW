@@ -18,6 +18,9 @@ nb-configuration.xml.local
 .DS_Store
 Thumbs.db
 
+# Office lock files
+~$*
+
 # Logs
 *.log
 
