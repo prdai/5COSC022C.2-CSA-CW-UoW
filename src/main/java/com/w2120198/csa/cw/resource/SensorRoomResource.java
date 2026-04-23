@@ -18,7 +18,7 @@ import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriInfo;
 
 @Path("/rooms")
-public class SensorRoom {
+public class SensorRoomResource {
 
     private final RoomService roomService = new RoomService();
 
